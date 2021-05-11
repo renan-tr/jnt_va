@@ -1,0 +1,565 @@
+/* Modelo JNT porta tripla*/
+
+`include "constants.vams"
+`include "disciplines.vams"
+`include "compact.vams"
+
+module JNT_va(d,p,f,s);
+
+    inout d,p,f,s;
+    electrical d,p,f,s;
+	
+	branch (p,d)   b_gd;
+	branch (p,f)   b_gs;
+	branch (p,s)   b_gb;
+	branch (d,f)   b_ds;
+	branch (d,s)   b_db;
+	branch (f,s)   b_sb;
+
+	parameter real Temp = `NOT_GIVEN;//[T]
+	parameter real W = 10e-7 from (0.0:inf); //[cm]
+	parameter real H = 10e-7 from (0.0:inf);//[cm]
+	parameter real ND = 1e19 from (0.0:inf);//[cm-3]
+	parameter real tox = 2e-7 from (0.0:inf);//[cm]
+	parameter real tbox = 100e-7 from (0.0:inf);//[cm]
+	parameter real L = 1e-4 from (0.0:inf);//[cm]
+	parameter real MU0 = 100 from [0.0:inf);//[cm]	
+	parameter real PHIM = 5.27 from (0.0:inf);//[cm]
+	parameter real VSAT = 1e7 from (0.0:inf);//[cm/s]
+	parameter real AUX0 =  18 from (0.0:inf);
+	parameter real AUX1 =  10.1 from (0.0:inf);
+	parameter real AUX2 =  8.9 from (0.0:inf);
+	parameter real AUX3 =  0.5 from (0.0:inf);
+	parameter real AUX4 =  5 from (0.0:inf);
+	parameter real AUX5 =  5 from (0.0:inf);
+	parameter real N = 1 from [1:inf); //fator de corpo
+	parameter real LSD =  25e-7 from [0.0:inf);
+	parameter real R1R2 =  0.5 from (0.0:inf);
+	
+	
+	parameter integer II = 0 from [0:1]; //ionização incompleta
+	parameter integer NF = 1 from (0:inf); //ionização incompleta
+	parameter integer EQ = 0 from [0:1]; //quantizacao
+	
+	`define esi `P_EPSSIL*0.01 //converter para cm 
+	`define eox `P_EPSOX*0.01 //converter para cm
+	`define ml 0.9163
+	
+	real T, mu, fit, Vg, Vd, Vs, Vb, Cox, Cbox, Wox, fif, Vfb, D, E, Qsi, Vt, cte, cte2, Vg2, Vg3, qtot, Vc, Vp;
+	real Edop0, Nref, c, Nb, d1, g, b, Edop, n1, n, NDOP, u0a, u0b, alpha, beta, ups, umin, alphaA, upsii, ucc, upsiicc, Eni, Nnih, C0, uni;
+	real phi, Lsat, qtotL, Id,FiBS, Vsub2, xdepl, phisB, deltaE0, phisacc;
+	real R, R1, R2,deltaEg0,ddeltaEg0_dVg,ddeltaEg0_dVs,deltaEg0L,ddeltaEg0_dVgL,ddeltaEg0_dVd, VgS, VgD;
+	real phiS,phisdep,dphisdVg,dphisdVs,dphisdVb,dphisdep_dVg,phiD,phisdepL,dphisdVgL,dphisdVd,dphisdVbL,dphisdep_dVd,dphisdep_dVb;
+	real dVt_dVb, dQsi_dVb, dphisB_dVb, dxdepl_dVb, dVsub2_dVb, dqtot_dVd, dqtotL_dVd, dqtotL_dVs, dqtot_dVs, dqtot_dVg, dqtotL_dVg, dqtot_dVb, dqtotL_dVb;
+	real Cgs, Cgd, Cgb, Cds_aux, Cds, Cdg_aux, Cdg, Cdb_aux, Cdb, Csd_aux, Csd_aux2, Csd_aux3, Csd, Csg_aux, Csg_aux2, Csg_aux3, Csg, Csb_aux, Csb_aux2, Csb_aux3, Csb, Cbs, Cbd, Cbg;
+	real dVg2_dVd, dVg3_dVd, dVg2_dVg, dVg3_dVg, dVg3_dVb, lambda1, lambda2, lambda, xmin, Esurf, deltaEG1, dVg2_dVd, dVg2_dVg, dphisacc_dVd, dphisacc_dVg, dEsurs_dVg, dEsurs_dVd;
+	real Ydd, Ydg, Yds, Ydb;// y1,y2,y3,y4
+	
+	function real mt;
+        input T;
+        real T;
+        begin
+            mt = 0.1913 - 4.042e-5 * T + 1.392e-6 * (pow(T,2)) - 4.326e-9 * (pow(T,3)) + 4.42e-12 * (pow(T,4));
+        end
+    endfunction
+	
+	function real mde;
+	    input T;
+        real T;
+        begin
+            mde = pow( 6 * sqrt(`ml * (pow(mt(T),2)) ),0.66666667);  
+        end
+    endfunction
+	
+	function real mdh;
+	    input T;
+        real T;
+        begin
+            mdh = 0.5906 - 2.45e-4 * T + 1.1504e-5 * (pow(T,2)) - 4.115e-8 * (pow(T,3)) + 4.502e-11 * (pow(T,4)); 
+        end
+    endfunction	
+
+	function real Nv;
+	    input T;
+        real T;
+        begin
+            Nv = 2 * (pow((2 * `M_PI * mdh(T) * `m0 * `P_K * T)/(pow(`P_H,2)),1.5)) * 2e-6;
+        end
+    endfunction	
+	
+	function real Nc;
+	    input T;
+        real T;
+        begin
+            Nc = 2 * (pow((2 * `M_PI * mde(T) * `m0 * `P_K * T)/(pow(`P_H,2)),1.5)) * 2e-6;
+        end
+    endfunction	
+	
+	function real Eg;
+	    input T;
+        real T;
+        begin
+            Eg = 1.1696 - 4.73e-4 * (pow(T,2))/(636+T);
+        end
+    endfunction	
+	
+	function real ni;
+	    input T;
+        real T;
+        begin
+            ni = sqrt(Nc(T) * Nv(T)) * exp(-Eg(T) * `P_Q /(2 * `P_K * T));
+        end
+    	endfunction
+
+	analog begin
+		
+		if (Temp == `NOT_GIVEN)
+            	T = $temperature;
+		else
+		T = Temp;
+
+        	fit = $vt(T);
+		
+		Vg = V(p);
+		Vd = V(d);
+		Vs = V(f);
+		Vb = V(s);
+		
+		Cox = `eox * ((2 * H + W)/tox + 2.3);
+		Cbox = `eox * ((W)/tbox);
+		Wox = (2 * H + W);
+		NDOP = ND;
+		
+		fif = fit * ln(NDOP/ni(T));
+		Vfb = PHIM - (4.15 + Eg(T)/2 - fif);
+
+		D = `P_Q * NDOP * `esi * (pow(2 * H + W,2));
+		E = D/4;
+		
+		R = 2*(1/(100*NDOP*`P_Q))*LSD/(W*H);
+		R1 = R1R2*R;
+		R2 = R-R1;
+
+		//Efeito substrato
+		FiBS = fit*ln(NDOP*1e15/(pow(ni(T),2)));
+		Vsub2=(FiBS+10)*(1+ln(1+exp(AUX5*(-1+(Vb+10)/(FiBS+10))))/(ln(1+exp(AUX5))))-10;
+		xdepl = -`esi/(`eox/tbox) + sqrt(pow(`esi/(`eox/tbox),2)+2*`esi*(Vsub2-Vb)/(`P_Q*NDOP));
+		phisB = pow(xdepl,2)*`P_Q*NDOP/(2*`esi);
+
+
+		Qsi = `P_Q * NDOP * W * H - Cbox*(FiBS-Vb+phisB);  
+
+		if (EQ == 1) begin 
+			deltaE0 = pow(`P_H,2)/(8*`P_Q*`ml*`m0*W*W*1e-4) + pow(`P_H,2)/(8*`P_Q*`ml*`m0*H*H*1e-4);
+			end
+		else    deltaE0 =0;
+
+		// Tensao de limiar
+		Vt = Vfb - Qsi/Cox - (1/(`P_Q*NDOP))*((pow(Qsi,2))/(`esi*pow(2*H+W,2))) +deltaE0 ;
+
+		//carga na fonte
+		Vp = Vg;
+		Vc = Vs;
+		cte = AUX0 - AUX1/(1+exp(-AUX2*(Vp-Vt-Vc)));
+		cte2 = (Vt+2)/(N*(`P_K*T/`P_Q)*2);  //Vt+2.5
+		cte2 = cte2-AUX3*cte2/(1+1*exp(-AUX4*(Vp-Vt-Vc)));
+		Vg2 = Vfb * (1-ln(1+exp(cte*(1-(Vp-Vc)/(Vfb))))/(ln(1+exp(cte))));
+		Vg3 = Vt+(Vt+2)*((ln(1+exp(cte2*(-1+(Vg2+2)/(Vt+2)))))/(ln(1+exp(cte2))));
+		phisdep = Vg2 + Vc - Vfb -D/(2*(pow(Cox,2))) +(sqrt(D/(pow(Cox,2)))*sqrt( D/(4*pow(Cox,2))  - (Vg3-Vfb) )   );
+		phisacc = fit*ln(1+pow(((Vp-Vg2-Vc)*Cox),2)/(D*fit));
+
+		phiS = phisacc + phisdep;
+		qtot = (Vg-Vfb-phiS)*Cox + Qsi;
+
+	//	//Nd = Ioniz(Ndop,0);
+		fif = fit * ln(NDOP/ni(T));
+		Vfb = PHIM - (4.15 + Eg(T)/2 - fif);
+
+		D = `P_Q * NDOP * `esi * (pow(2 * H + W,2));
+		E = D/4;
+		
+		Qsi = `P_Q * NDOP * W * H - Cbox*(FiBS-Vb+phisB);  
+		Vt = Vfb - Qsi/Cox - (1/(`P_Q*NDOP))*((pow(Qsi,2))/(`esi*pow(2*H+W,2))) +deltaE0 ;
+
+
+
+	//	//mu = Mobilidade(Nd,Nop);
+	
+		
+		//if (II == 1) begin //ionizacao incompleta
+		//	Edop0 = 44.39e-3;
+		//	Nref = 1.3e18;
+		//	c = 1.4;
+		//	Nb = 4.5e18;
+		//	d1 = 2.4;
+		//	g = 1/4;
+
+		//	b = pow(1+pow(ND/Nb,d1),-1);
+		//	Edop = Edop0 / (1+ pow(ND/Nref,c));
+		//	n1 = Nc(T) * exp(-Edop*`P_Q/(`P_K*T));
+        //   n = qtot;
+		//	NDOP = ND/(1+ (b/(g+(1-b)*ND/n1))*n/n1); 
+        
+        //end
+	//else	NDOP = ND;
+		
+		//if (MU0 == 0) begin //Mobilidade
+			//u0a = 4195;     
+			//u0b = 2153;
+			//alpha = 1.5;    
+			//beta = 3.13;
+			//ups = 1/((1/(u0a*(pow(T/300,-alpha)))) + (1/(u0b*(pow(T/300,-beta)))));
+			////Impureza ionizada
+			//umin = 197.17 - 45.505*log(77);
+			//Nref = 1.12E17*(pow(T/300,3.2));
+			//alphaA = 0.72*(pow(T/300,0.065));
+			//upsii = umin + ((ups - umin)/(1+(pow(NDOP/Nref,alphaA))));
+			////Portador-portador
+			//ucc = 2e17/(sqrt(NDOP)*ln(1+(8.28E18*(pow(T,2))*pow(NDOP,(-0.3333333)))));
+			//upsiicc = 1/((1/upsii)+(1/ucc));
+			////Impureza neutra
+			//Eni = 0.71*mde(T)*pow(11.9,-2);
+			//Nnih = ND - NDOP;
+			//C0 = (0.041*`P_Q*2*`M_PI*mde(T))/(5.29e-9*11.9*Nnih*`P_H);
+			//uni = C0*(((2/3)*sqrt((`P_K*T)/(`P_Q*Eni)))+((1/3)*sqrt((`P_Q*Eni)/(`P_K*T))));
+			////Mathiessen
+			//mu= 1/((1/upsiicc)+(1/uni));
+				
+		//end
+		//else 
+			mu = MU0;
+		//	mu = mu/(1+0*max((Vg-FiMS)*tanh(4*(Vg-FiMS)),0)); 	
+
+		if (EQ == 1) begin
+			Vp = Vg;
+			Vc = Vs;
+			cte = AUX0 - AUX1/(1+exp(-AUX2*(Vp-Vt-Vc)));
+			cte2 = (Vt+2)/(N*(`P_K*T/`P_Q)*2);  //Vt+2.5
+			cte2 = cte2-AUX3*cte2/(1+1*exp(-AUX4*(Vp-Vt-Vc)));
+
+			Vg2 = Vfb * (1-ln(1+exp(cte*(1-(Vp-Vc)/(Vfb))))/(ln(1+exp(cte))));
+				
+			phisacc = fit*ln(1+pow(((Vp-Vg2-Vc)*Cox),2)/(D*fit));
+			Esurf = 1+(Vp-Vg2-Vc)*Cox/(`esi*Wox);
+			deltaEG1 = 1*(8.45e-8/(1+NDOP/2e19))*(pow(`esi/(4*`P_K*T),1/3))*pow(Esurf,0.63);
+			deltaEg0 = deltaE0 + deltaEG1;
+
+			Vp = Vg;
+			Vc = Vd;
+			cte = AUX0 - AUX1/(1+exp(-AUX2*(Vp-Vt-Vc)));
+			cte2 = (Vt+2)/(N*(`P_K*T/`P_Q)*2);  //Vt+2.5
+			cte2 = cte2-AUX3*cte2/(1+1*exp(-AUX4*(Vp-Vt-Vc)));
+
+			Vg2 = Vfb * (1-ln(1+exp(cte*(1-(Vp-Vc)/(Vfb))))/(ln(1+exp(cte))));
+				
+			phisacc = fit*ln(1+pow(((Vp-Vg2-Vc)*Cox),2)/(D*fit));
+			Esurf = 1+(Vp-Vg2-Vc)*Cox/(`esi*Wox);
+			deltaEG1 = 1*(8.45e-8/(1+NDOP/2e19))*(pow(`esi/(4*`P_K*T),1/3))*pow(Esurf,0.63);
+			deltaEg0L = deltaE0 + deltaEG1;
+		end
+		else begin
+			deltaEg0 =0;
+			deltaEg0L=0;
+		end
+ 
+		VgS = Vg - deltaEg0;
+		VgD = Vg - deltaEg0L;
+		// SCE
+		lambda1 = sqrt(( `esi * W * tox / (2 * `eox) ) * (1+ `eox * W/( 4 * `esi * tox)));
+		lambda2 = sqrt(( `esi * H * tox / (4 * `eox) ) * (1+ `eox * H/( 2 * `esi * tox)));
+		lambda =  1/(sqrt(pow(1/lambda1,2)+pow(0.5/lambda2,2)));
+		Vc = Vs;
+		Vp = VgS;
+		cte = AUX0 - AUX1/(1+exp(-AUX2*(Vp-Vt-Vc)));
+		cte2 = (Vt+2)/(N*(`P_K*T/`P_Q)*2);  //Vt+2.5
+		cte2 = cte2-AUX3*cte2/(1+1*exp(-AUX4*(Vp-Vt-Vc )));
+		Vg2 = Vfb * (1-ln(1+exp(cte*(1-(Vp-Vc )/(Vfb))))/(ln(1+exp(cte))));
+		Vg3 = Vt+(Vt+2)*((ln(1+exp(cte2*(-1+(Vg2+2)/(Vt+2)))))/(ln(1+exp(cte2))));
+		phisdep = Vg2 + Vc  - Vfb -D/(2*(pow(Cox,2))) +(sqrt(D/(pow(Cox,2)))*sqrt( D/(4*pow(Cox,2))  - (Vg3-Vfb) )   );
+   		Vc = Vd;
+		Vp = VgD;
+		cte = AUX0 - AUX1/(1+exp(-AUX2*(Vp-Vt-Vc)));
+		cte2 = (Vt+2)/(N*(`P_K*T/`P_Q)*2);  //Vt+2.5
+		cte2 = cte2-AUX3*cte2/(1+1*exp(-AUX4*(Vp-Vt-Vc )));
+		Vg2 = Vfb * (1-ln(1+exp(cte*(1-(Vp-Vc )/(Vfb))))/(ln(1+exp(cte))));
+		Vg3 = Vt+(Vt+2)*((ln(1+exp(cte2*(-1+(Vg2+2)/(Vt+2)))))/(ln(1+exp(cte2))));
+		phisdepL = Vg2 + Vc  - Vfb -D/(2*(pow(Cox,2))) +(sqrt(D/(pow(Cox,2)))*sqrt( D/(4*pow(Cox,2))  - (Vg3-Vfb) )   );          
+		xmin = (lambda/2)*ln((((-Vd+phisdepL)*exp(L/lambda)-(-Vs+phisdep))/((-Vs+phisdep)-(-Vd+phisdepL)*exp(-L/lambda))));
+		phi = ((-Vs+phisdep)*sinh(xmin/lambda)+(-Vd+phisdepL)*sinh((L-xmin)/lambda))/(sinh(L/lambda));
+		
+		VgS = Vg -phi - deltaEg0;
+		VgD = Vg -phi - deltaEg0L;
+
+		// carga na fonte
+		Vp = VgS;
+		Vc = Vs;
+		cte = AUX0 - AUX1/(1+exp(-AUX2*(Vp-Vt-Vc)));
+		cte2 = (Vt+2)/(N*(`P_K*T/`P_Q)*2);  //Vt+2.5
+		cte2 = cte2-AUX3*cte2/(1+1*exp(-AUX4*(Vp-Vt-Vc)));
+		Vg2 = Vfb * (1-ln(1+exp(cte*(1-(Vp-Vc)/(Vfb))))/(ln(1+exp(cte))));
+		Vg3 = Vt+(Vt+2)*((ln(1+exp(cte2*(-1+(Vg2+2)/(Vt+2)))))/(ln(1+exp(cte2))));
+		phisdep = Vg2 + Vc - Vfb -D/(2*(pow(Cox,2))) +(sqrt(D/(pow(Cox,2)))*sqrt( D/(4*pow(Cox,2))  - (Vg3-Vfb) )   );
+		phisacc = fit*ln(1+pow(((Vp-Vg2-Vc)*Cox),2)/(D*fit));
+
+		phiS = phisacc + phisdep;
+		qtot = (VgS-Vfb-phiS)*Cox + Qsi;
+
+		// carga no dreno
+		Vp = VgD;
+		Vc = Vd;
+		cte = AUX0 - AUX1/(1+exp(-AUX2*(Vp-Vt-Vc)));
+		cte2 = (Vt+2)/(N*(`P_K*T/`P_Q)*2);  //Vt+2.5
+		cte2 = cte2-AUX3*cte2/(1+1*exp(-AUX4*(Vp-Vt-Vc)));
+		Vg2 = Vfb * (1-ln(1+exp(cte*(1-(Vp-Vc)/(Vfb))))/(ln(1+exp(cte))));
+		Vg3 = Vt+(Vt+2)*((ln(1+exp(cte2*(-1+(Vg2+2)/(Vt+2)))))/(ln(1+exp(cte2))));
+		phisdep = Vg2 + Vc - Vfb -D/(2*(pow(Cox,2))) +(sqrt(D/(pow(Cox,2)))*sqrt( D/(4*pow(Cox,2))  - (Vg3-Vfb) )   );
+		phisacc = fit*ln(1+pow(((Vp-Vg2-Vc)*Cox),2)/(D*fit));
+
+		phiD = phisacc + phisdep;
+		qtotL = (VgD-Vfb-phiD)*Cox + Qsi;
+		
+		Lsat = 0 ;
+
+		//mu= mu/(1+Vds*mu/((L-Lsat)*VSAT));
+		//Id = -(mu/(L-Lsat))*((pow(qtotL,2)-pow(qtot,2))/(2*Cox)    );
+		Id = (pow(qtot,2)-pow(qtotL,2))/(2*Cox*L/mu + 2*Cox*(R1*qtot+R2*qtotL));
+
+        Vd = Vd - R2*abs(Id);
+        Vs = R1*abs(Id);
+		
+		if (EQ == 1) begin 
+			Vp = Vg;
+			Vc = Vs;
+			cte = AUX0 - AUX1/(1+exp(-AUX2*(Vp-Vt-Vc)));
+			cte2 = (Vt+2)/(N*(`P_K*T/`P_Q)*2);  //Vt+2.5
+			cte2 = cte2-AUX3*cte2/(1+1*exp(-AUX4*(Vp-Vt-Vc)));
+
+			Vg2 = Vfb * (1-ln(1+exp(cte*(1-(Vp-Vc)/(Vfb))))/(ln(1+exp(cte))));
+				
+			phisacc = fit*ln(1+pow(((Vp-Vg2-Vc)*Cox),2)/(D*fit));
+			Esurf = 1+(Vp-Vg2-Vc)*Cox/(`esi*Wox);
+			deltaEG1 = 1*(8.45e-8/(1+NDOP/2e19))*(pow(`esi/(4*`P_K*T),1/3))*pow(Esurf,0.63);
+			deltaEg0 = deltaE0 + deltaEG1;
+
+			dVg2_dVd = -Vfb* exp(cte*(1-(Vp-Vc)/(Vfb))) * (cte*(1/(Vfb))) /( (ln(1+exp(cte))) * (1+exp(cte*(1-(Vp-Vc)/(Vfb))))   ); 
+			dVg2_dVg = -Vfb* exp(cte*(1-(Vp-Vc)/(Vfb))) * (cte*(-1/(Vfb))) /( (ln(1+exp(cte))) * (1+exp(cte*(1-(Vp-Vc)/(Vfb))))   );
+			dphisacc_dVd  = fit* (2*((Vp-Vg2-Vc)*Cox)*(-dVg2_dVd-1)*Cox/(D*fit))  *1/(1+(pow((Vp-Vg2-Vc)*Cox,2))/(D*fit));
+			dphisacc_dVg = fit* (2*((Vp-Vg2-Vc)*Cox)*(1-dVg2_dVg)*Cox/(D*fit))  *1/(1+(pow((Vp-Vg2-Vc)*Cox,2))/(D*fit));
+
+			dEsurs_dVg = (1 - dVg2_dVg - dphisacc_dVg)*(Cox/(`esi*Wox));
+			ddeltaEg0_dVg = 1*(8.45e-8/(1+NDOP/2e19))*(pow(`esi/(4*`P_K*T),1/3))*0.63*dEsurs_dVg/(pow(Esurf,0.37));
+			dEsurs_dVd = (- dVg2_dVd - dphisacc_dVd-1)*(Cox/(`esi*Wox));
+			ddeltaEg0_dVs = 1*(8.45e-8/(1+NDOP/2e19))*(pow(`esi/(4*`P_K*T),1/3))*0.63*dEsurs_dVd/(pow(Esurf,0.37));
+
+			Vp = Vg;
+			Vc = Vd;
+			cte = AUX0 - AUX1/(1+exp(-AUX2*(Vp-Vt-Vc)));
+			cte2 = (Vt+2)/(N*(`P_K*T/`P_Q)*2);  //Vt+2.5
+			cte2 = cte2-AUX3*cte2/(1+1*exp(-AUX4*(Vp-Vt-Vc)));
+
+			Vg2 = Vfb * (1-ln(1+exp(cte*(1-(Vp-Vc)/(Vfb))))/(ln(1+exp(cte))));
+				
+			phisacc = fit*ln(1+pow(((Vp-Vg2-Vc)*Cox),2)/(D*fit));
+			Esurf = 1+(Vp-Vg2-Vc)*Cox/(`esi*Wox);
+			deltaEG1 = 1*(8.45e-8/(1+NDOP/2e19))*(pow(`esi/(4*`P_K*T),1/3))*pow(Esurf,0.63);
+			deltaEg0L = deltaE0 + deltaEG1;
+
+			dVg2_dVd = -Vfb* exp(cte*(1-(Vp-Vc)/(Vfb))) * (cte*(1/(Vfb))) /( (ln(1+exp(cte))) * (1+exp(cte*(1-(Vp-Vc)/(Vfb))))   ); 
+			dVg2_dVg = -Vfb* exp(cte*(1-(Vp-Vc)/(Vfb))) * (cte*(-1/(Vfb))) /( (ln(1+exp(cte))) * (1+exp(cte*(1-(Vp-Vc)/(Vfb))))   );
+			dphisacc_dVd  = fit* (2*((Vp-Vg2-Vc)*Cox)*(-dVg2_dVd-1)*Cox/(D*fit))  *1/(1+(pow((Vp-Vg2-Vc)*Cox,2))/(D*fit));
+			dphisacc_dVg = fit* (2*((Vp-Vg2-Vc)*Cox)*(1-dVg2_dVg)*Cox/(D*fit))  *1/(1+(pow((Vp-Vg2-Vc)*Cox,2))/(D*fit));
+
+			dEsurs_dVg = (1 - dVg2_dVg - dphisacc_dVg)*(Cox/(`esi*Wox));
+			ddeltaEg0_dVgL = 1*(8.45e-8/(1+NDOP/2e19))*(pow(`esi/(4*`P_K*T),1/3))*0.63*dEsurs_dVg/(pow(Esurf,0.37));
+			dEsurs_dVd = (- dVg2_dVd - dphisacc_dVd-1)*(Cox/(`esi*Wox));
+			ddeltaEg0_dVd = 1*(8.45e-8/(1+NDOP/2e19))*(pow(`esi/(4*`P_K*T),1/3))*0.63*dEsurs_dVd/(pow(Esurf,0.37));
+		end
+		else begin
+			deltaEg0 =0;
+			ddeltaEg0_dVg=0;
+			ddeltaEg0_dVs=0;
+			deltaEg0L=0;
+			ddeltaEg0_dVgL=0;
+			ddeltaEg0_dVd=0;
+		end
+ 
+		VgS = Vg - deltaEg0;
+		VgD = Vg - deltaEg0L;
+
+		// SCE
+		Vc = Vs;
+		Vp = VgS;
+		cte = AUX0 - AUX1/(1+exp(-AUX2*(Vp-Vt-Vc)));
+		cte2 = (Vt+2)/(N*(`P_K*T/`P_Q)*2);  //Vt+2.5
+		cte2 = cte2-AUX3*cte2/(1+1*exp(-AUX4*(Vp-Vt-Vc )));
+		Vg2 = Vfb * (1-ln(1+exp(cte*(1-(Vp-Vc )/(Vfb))))/(ln(1+exp(cte))));
+		Vg3 = Vt+(Vt+2)*((ln(1+exp(cte2*(-1+(Vg2+2)/(Vt+2)))))/(ln(1+exp(cte2))));
+		phisdep = Vg2 + Vc  - Vfb -D/(2*(pow(Cox,2))) +(sqrt(D/(pow(Cox,2)))*sqrt( D/(4*pow(Cox,2))  - (Vg3-Vfb) )   );
+   		Vc = Vd;
+		Vp = VgD;
+		cte = AUX0 - AUX1/(1+exp(-AUX2*(Vp-Vt-Vc)));
+		cte2 = (Vt+2)/(N*(`P_K*T/`P_Q)*2);  //Vt+2.5
+		cte2 = cte2-AUX3*cte2/(1+1*exp(-AUX4*(Vp-Vt-Vc )));
+		Vg2 = Vfb * (1-ln(1+exp(cte*(1-(Vp-Vc )/(Vfb))))/(ln(1+exp(cte))));
+		Vg3 = Vt+(Vt+2)*((ln(1+exp(cte2*(-1+(Vg2+2)/(Vt+2)))))/(ln(1+exp(cte2))));
+		phisdepL = Vg2 + Vc  - Vfb -D/(2*(pow(Cox,2))) +(sqrt(D/(pow(Cox,2)))*sqrt( D/(4*pow(Cox,2))  - (Vg3-Vfb) )   );          
+		xmin = (lambda/2)*ln((((-Vd+phisdepL)*exp(L/lambda)-(-Vs+phisdep))/((-Vs+phisdep)-(-Vd+phisdepL)*exp(-L/lambda))));
+		phi = ((-Vs+phisdep)*sinh(xmin/lambda)+(-Vd+phisdepL)*sinh((L-xmin)/lambda))/(sinh(L/lambda));
+				
+		VgS = Vg -phi - deltaEg0;
+		VgD = Vg -phi - deltaEg0L;
+		
+		//
+		dVsub2_dVb = (FiBS+10)*( (AUX5*(1/(FiBS+10)))* exp(AUX5*(-1+(Vb+10)/(FiBS+10))) )/((ln(1+exp(AUX5))) * (1+exp(AUX5*(-1+(Vb+10)/(FiBS+10)))) );
+		dxdepl_dVb = ( 2*`esi*(dVsub2_dVb - 1) /(`P_Q*NDOP) )/(2*sqrt(pow(`esi/(`eox/tbox),2)+2*`esi*(Vsub2-Vb)/(`P_Q*NDOP)));
+		dphisB_dVb = (2*xdepl*dxdepl_dVb)*`P_Q*NDOP/(2*`esi);
+		dQsi_dVb = - Cbox*(-1+dphisB_dVb);
+		dVt_dVb = -dQsi_dVb/Cox - (1/(`P_Q*NDOP))*(((2*Qsi)*dQsi_dVb)/(`esi*pow(2*H+W,2))) ;
+
+		// carga na fonte
+		Vp = VgS;
+		Vc = Vs;
+		cte = AUX0 - AUX1/(1+exp(-AUX2*(Vp-Vt-Vc)));
+		cte2 = (Vt+2)/(N*(`P_K*T/`P_Q)*2);  //Vt+2.5
+		cte2 = cte2-AUX3*cte2/(1+1*exp(-AUX4*(Vp-Vt-Vc)));
+		Vg2 = Vfb * (1-ln(1+exp(cte*(1-(Vp-Vc)/(Vfb))))/(ln(1+exp(cte))));
+		Vg3 = Vt+(Vt+2)*((ln(1+exp(cte2*(-1+(Vg2+2)/(Vt+2)))))/(ln(1+exp(cte2))));
+		phisdep = Vg2 + Vc - Vfb -D/(2*(pow(Cox,2))) +(sqrt(D/(pow(Cox,2)))*sqrt( D/(4*pow(Cox,2))  - (Vg3-Vfb) )   );
+		phisacc = fit*ln(1+pow(((Vp-Vg2-Vc)*Cox),2)/(D*fit));
+
+		phiS = phisacc + phisdep;
+		qtot = (VgS-Vfb-phiS)*Cox + Qsi;
+
+		dVg2_dVd = -Vfb* exp(cte*(1-(Vp-Vc)/(Vfb))) * (cte*(1/(Vfb))) /( (ln(1+exp(cte))) * (1+exp(cte*(1-(Vp-Vc)/(Vfb))))   ) ;
+		dVg3_dVd = (Vt+2)* ( exp(cte2*(-1+(Vg2+2)/(Vt+2))) *(cte2*((dVg2_dVd)/(Vt+2))) ) /( (ln(1+exp(cte2))) * (1+exp(cte2*(-1+(Vg2+2)/(Vt+2)))) );
+		dphisdep_dVd = dVg2_dVd + 1 + sqrt(D/(pow(Cox,2)))* (-dVg3_dVd) * 1/(2*sqrt( D/(4*pow(Cox,2))  - (Vg3-Vfb) ) );
+		dphisacc_dVd  = fit* (2*((Vp-Vg2-Vc)*Cox)*(-dVg2_dVd-1)*Cox/(D*fit))  *1/(1+(pow((Vp-Vg2-Vc)*Cox,2))/(D*fit));
+		dphisdVs = dphisdep_dVd  + dphisacc_dVd ;   
+
+		dVg2_dVg = -Vfb* exp(cte*(1-(Vp-Vc)/(Vfb))) * (cte*(-1/(Vfb))) /( (ln(1+exp(cte))) * (1+exp(cte*(1-(Vp-Vc)/(Vfb))))   );
+		dVg3_dVg = (Vt+2)* ( exp(cte2*(-1+(Vg2+2)/(Vt+2))) *(cte2*((dVg2_dVg)/(Vt+2))) ) /( (ln(1+exp(cte2))) * (1+exp(cte2*(-1+(Vg2+2)/(Vt+2)))) );
+		dphisdep_dVg = dVg2_dVg + sqrt(D/(pow(Cox,2)))* (-dVg3_dVg) * 1/(2*sqrt( D/(4*pow(Cox,2))  - (Vg3-Vfb) ) );
+		dphisacc_dVg = fit* (2*((Vp-Vg2-Vc)*Cox)*(1-dVg2_dVg)*Cox/(D*fit))  *1/(1+(pow((Vp-Vg2-Vc)*Cox,2))/(D*fit));
+		dphisdVg = dphisdep_dVg  + dphisacc_dVg;    
+
+		dVg3_dVb = dVt_dVb + (dVt_dVb )*((ln(1+exp(cte2*(-1+(Vg2+2)/(Vt+2)))))/(ln(1+exp(cte2)))) + (Vt+2)* (( (-cte2*dVt_dVb*((Vg2+2)/pow(Vt+2,2)))* exp(cte2*(-1+(Vg2+2)/(Vt+2))) )/(ln(1+exp(cte2))*(1+exp(cte2*(-1+(Vg2+2)/(Vt+2))))));
+		dphisdVb = sqrt(D/(pow(Cox,2)))* (-dVg3_dVb) * 1/(2*sqrt( D/(4*pow(Cox,2))  - (Vg3-Vfb) ) );
+
+
+		//y1 = dVg3_dVg - dVg2_dVg;
+		//y2 = dVg3_dVd - dVg2_dVd;
+
+		// carga no dreno
+		Vp = VgD;
+		Vc = Vd;
+		cte = AUX0 - AUX1/(1+exp(-AUX2*(Vp-Vt-Vc)));
+		cte2 = (Vt+2)/(N*(`P_K*T/`P_Q)*2);  //Vt+2.5
+		cte2 = cte2-AUX3*cte2/(1+1*exp(-AUX4*(Vp-Vt-Vc)));
+		Vg2 = Vfb * (1-ln(1+exp(cte*(1-(Vp-Vc)/(Vfb))))/(ln(1+exp(cte))));
+		Vg3 = Vt+(Vt+2)*((ln(1+exp(cte2*(-1+(Vg2+2)/(Vt+2)))))/(ln(1+exp(cte2))));
+		phisdep = Vg2 + Vc - Vfb -D/(2*(pow(Cox,2))) +(sqrt(D/(pow(Cox,2)))*sqrt( D/(4*pow(Cox,2))  - (Vg3-Vfb) )   );
+		phisacc = fit*ln(1+pow(((Vp-Vg2-Vc)*Cox),2)/(D*fit));
+
+		phiD = phisacc + phisdep;
+		qtotL = (VgD-Vfb-phiD)*Cox + Qsi;
+
+		dVg2_dVd = -Vfb* exp(cte*(1-(Vp-Vc)/(Vfb))) * (cte*(1/(Vfb))) /( (ln(1+exp(cte))) * (1+exp(cte*(1-(Vp-Vc)/(Vfb))))   ) ;
+		dVg3_dVd = (Vt+2)* ( exp(cte2*(-1+(Vg2+2)/(Vt+2))) *(cte2*((dVg2_dVd)/(Vt+2))) ) /( (ln(1+exp(cte2))) * (1+exp(cte2*(-1+(Vg2+2)/(Vt+2)))) );
+		dphisdep_dVd = dVg2_dVd + 1 + sqrt(D/(pow(Cox,2)))* (-dVg3_dVd) * 1/(2*sqrt( D/(4*pow(Cox,2))  - (Vg3-Vfb) ) );
+		dphisacc_dVd  = fit* (2*((Vp-Vg2-Vc)*Cox)*(-dVg2_dVd-1)*Cox/(D*fit))  *1/(1+(pow((Vp-Vg2-Vc)*Cox,2))/(D*fit));
+		dphisdVd = dphisdep_dVd  + dphisacc_dVd ;   
+
+		dVg2_dVg = -Vfb* exp(cte*(1-(Vp-Vc)/(Vfb))) * (cte*(-1/(Vfb))) /( (ln(1+exp(cte))) * (1+exp(cte*(1-(Vp-Vc)/(Vfb))))   );
+		dVg3_dVg = (Vt+2)* ( exp(cte2*(-1+(Vg2+2)/(Vt+2))) *(cte2*((dVg2_dVg)/(Vt+2))) ) /( (ln(1+exp(cte2))) * (1+exp(cte2*(-1+(Vg2+2)/(Vt+2)))) );
+		dphisdep_dVg = dVg2_dVg + sqrt(D/(pow(Cox,2)))* (-dVg3_dVg) * 1/(2*sqrt( D/(4*pow(Cox,2))  - (Vg3-Vfb) ) );
+		dphisacc_dVg = fit* (2*((Vp-Vg2-Vc)*Cox)*(1-dVg2_dVg)*Cox/(D*fit))  *1/(1+(pow((Vp-Vg2-Vc)*Cox,2))/(D*fit));
+		dphisdVgL = dphisdep_dVg  + dphisacc_dVg;    
+
+		dVg3_dVb = dVt_dVb + (dVt_dVb )*((ln(1+exp(cte2*(-1+(Vg2+2)/(Vt+2)))))/(ln(1+exp(cte2)))) + (Vt+2)* (( (-cte2*dVt_dVb*((Vg2+2)/pow(Vt+2,2)))* exp(cte2*(-1+(Vg2+2)/(Vt+2))) )/(ln(1+exp(cte2))*(1+exp(cte2*(-1+(Vg2+2)/(Vt+2))))));
+		dphisdep_dVb = sqrt(D/(pow(Cox,2)))* (-dVg3_dVb) * 1/(2*sqrt( D/(4*pow(Cox,2))  - (Vg3-Vfb) ) );
+		dphisdVbL = dphisdep_dVb ;
+
+		//y3 = dVg3_dVg - dVg2_dVg;
+		//y4 = dVg3_dVd - dVg2_dVd;
+		//
+
+
+		dqtot_dVd = 0 ;
+		dqtotL_dVd = -Cox *(dphisdVd+ddeltaEg0_dVd) ;
+
+		dqtotL_dVs = 0;
+		dqtot_dVs = -Cox *(dphisdVs+ddeltaEg0_dVs) ;
+
+		dqtot_dVg = Cox *(1 - dphisdVg -ddeltaEg0_dVg) ;
+		dqtotL_dVg = Cox *(1 - dphisdVgL-ddeltaEg0_dVgL) ;
+
+		dqtot_dVb = -Cox *(dphisdVb) - Cbox*(-1+dphisB_dVb) ;
+		dqtotL_dVb =  -Cox *(dphisdVbL) - Cbox*(-1+dphisB_dVb);
+
+
+		Yds  = -(mu/(L-Lsat))*((2*qtotL*dqtotL_dVs - 2*qtot*dqtot_dVs )/(2*Cox) );
+		Ydb  = -(mu/(L-Lsat))*((2*qtotL*dqtotL_dVb - 2*qtot*dqtot_dVb )/(2*Cox) );
+		Ydd  = -(mu/(L-Lsat))*((2*qtotL*dqtotL_dVd - 2*qtot*dqtot_dVd )/(2*Cox) );
+		Ydg  = -(mu/(L-Lsat))*((2*qtotL*dqtotL_dVg - 2*qtot*dqtot_dVg )/(2*Cox) );
+
+
+
+		Cgs = (2*(L-Lsat)/3)*(  (3*qtot*dqtotL_dVs+3*qtotL*dqtot_dVs+2*(qtot-qtotL)*(dqtot_dVs-dqtotL_dVs))/(qtot+qtotL) - ( 3*qtot*qtotL*(dqtot_dVs+dqtotL_dVs)+(pow(qtot-qtotL,2))*(dqtot_dVs+dqtotL_dVs))/(pow(qtot+qtotL,2)));
+
+		Cgd = (2*(L-Lsat)/3)*(  (3*qtot*dqtotL_dVd+3*qtotL*dqtot_dVd+2*(qtot-qtotL)*(dqtot_dVd-dqtotL_dVd))/(qtot+qtotL) - ( 3*qtot*qtotL*(dqtot_dVd+dqtotL_dVd)+(pow(qtot-qtotL,2))*(dqtot_dVd+dqtotL_dVd))/(pow(qtot+qtotL,2)));
+
+		Cgb = Cbox*L*(-1+dphisB_dVb)+(2*(L-Lsat)/3)*(  (3*qtot*dqtotL_dVb+3*qtotL*dqtot_dVb+2*(qtot-qtotL)*(dqtot_dVb-dqtotL_dVb))/(qtot+qtotL) - ( 3*qtot*qtotL*(dqtot_dVb+dqtotL_dVb)+(pow(qtot-qtotL,2))*(dqtot_dVb+dqtotL_dVb))/(pow(qtot+qtotL,2)));
+
+		Cds_aux = (9*pow(qtotL,2)*dqtotL_dVs+12*qtot*qtotL*dqtotL_dVs+4*pow(qtot,2)*dqtotL_dVs+6*dqtot_dVs*pow(qtotL,2)+8*qtot*qtotL*dqtot_dVs+6*pow(qtot,2)*dqtot_dVs)/(15*pow(qtotL,2)+30*qtot*qtotL+15*pow(qtot,2));
+		Cds = -(L-Lsat)*2*(Cds_aux - ((3*pow(qtotL,3)+6*qtot*pow(qtotL,2)+4*pow(qtot,2)*qtotL+2*pow(qtot,3))*(30*qtotL*dqtotL_dVs+30*qtot*dqtotL_dVs+30*qtotL*dqtot_dVs+30*qtot*dqtot_dVs))/(pow(15*pow(qtotL,2)+30*qtot*qtotL+15*pow(qtot,2),2)));
+
+		Cdg_aux = (9*pow(qtotL,2)*dqtotL_dVg+12*qtot*qtotL*dqtotL_dVg+4*pow(qtot,2)*dqtotL_dVg+6*dqtot_dVg*pow(qtotL,2)+8*qtot*qtotL*dqtot_dVg+6*pow(qtot,2)*dqtot_dVg)/(15*pow(qtotL,2)+30*qtot*qtotL+15*pow(qtot,2));
+		Cdg = -(L-Lsat)*2*(Cdg_aux - ((3*pow(qtotL,3)+6*qtot*pow(qtotL,2)+4*pow(qtot,2)*qtotL+2*pow(qtot,3))*(30*qtotL*dqtotL_dVg+30*qtot*dqtotL_dVg+30*qtotL*dqtot_dVg+30*qtot*dqtot_dVg))/(pow(15*pow(qtotL,2)+30*qtot*qtotL+15*pow(qtot,2),2)));
+
+		Cdb_aux = (9*pow(qtotL,2)*dqtotL_dVb+12*qtot*qtotL*dqtotL_dVb+4*pow(qtot,2)*dqtotL_dVb+6*dqtot_dVb*pow(qtotL,2)+8*qtot*qtotL*dqtot_dVb+6*pow(qtot,2)*dqtot_dVb)/(15*pow(qtotL,2)+30*qtot*qtotL+15*pow(qtot,2));
+		Cdb = -(L-Lsat)*2*(Cdb_aux - ((3*pow(qtotL,3)+6*qtot*pow(qtotL,2)+4*pow(qtot,2)*qtotL+2*pow(qtot,3))*(30*qtotL*dqtotL_dVb+30*qtot*dqtotL_dVb+30*qtotL*dqtot_dVb+30*qtot*dqtot_dVb))/(pow(15*pow(qtotL,2)+30*qtot*qtotL+15*pow(qtot,2),2)));
+
+		Csd_aux = (2*(L-Lsat)/3)*(  (3*qtot*dqtotL_dVd+3*qtotL*dqtot_dVd+2*(qtot-qtotL)*(dqtot_dVd-dqtotL_dVd))/(qtot+qtotL) - ( 3*qtot*qtotL*(dqtot_dVd+dqtotL_dVd)+(pow(qtot-qtotL,2))*(dqtot_dVd+dqtotL_dVd))/(pow(qtot+qtotL,2)));
+		Csd_aux2 = (9*pow(qtotL,2)*dqtotL_dVd+12*qtot*qtotL*dqtotL_dVd+4*pow(qtot,2)*dqtotL_dVd+6*dqtot_dVd*pow(qtotL,2)+8*qtot*qtotL*dqtot_dVd+6*pow(qtot,2)*dqtot_dVd)/(15*pow(qtotL,2)+30*qtot*qtotL+15*pow(qtot,2));
+		Csd_aux3 = -(L-Lsat)*2*(Csd_aux2 - ((3*pow(qtotL,3)+6*qtot*pow(qtotL,2)+4*pow(qtot,2)*qtotL+2*pow(qtot,3))*(30*qtotL*dqtotL_dVd+30*qtot*dqtotL_dVd+30*qtotL*dqtot_dVd+30*qtot*dqtot_dVd))/(pow(15*pow(qtotL,2)+30*qtot*qtotL+15*pow(qtot,2),2)));
+		Csd = -Csd_aux - Csd_aux3;
+
+		Csg_aux = (2*(L-Lsat)/3)*(  (3*qtot*dqtotL_dVg+3*qtotL*dqtot_dVg+2*(qtot-qtotL)*(dqtot_dVg-dqtotL_dVg))/(qtot+qtotL) - ( 3*qtot*qtotL*(dqtot_dVg+dqtotL_dVg)+(pow(qtot-qtotL,2))*(dqtot_dVg+dqtotL_dVg))/(pow(qtot+qtotL,2)));
+		Csg_aux2 = (9*pow(qtotL,2)*dqtotL_dVg+12*qtot*qtotL*dqtotL_dVg+4*pow(qtot,2)*dqtotL_dVg+6*dqtot_dVg*pow(qtotL,2)+8*qtot*qtotL*dqtot_dVg+6*pow(qtot,2)*dqtot_dVg)/(15*pow(qtotL,2)+30*qtot*qtotL+15*pow(qtot,2));
+		Csg_aux3 = -(L-Lsat)*2*(Csg_aux2 - ((3*pow(qtotL,3)+6*qtot*pow(qtotL,2)+4*pow(qtot,2)*qtotL+2*pow(qtot,3))*(30*qtotL*dqtotL_dVg+30*qtot*dqtotL_dVg+30*qtotL*dqtot_dVg+30*qtot*dqtot_dVg))/(pow(15*pow(qtotL,2)+30*qtot*qtotL+15*pow(qtot,2),2)));
+		Csg = -Csg_aux - Csg_aux3;
+
+		Csb_aux = (2*(L-Lsat)/3)*(  (3*qtot*dqtotL_dVb+3*qtotL*dqtot_dVb+2*(qtot-qtotL)*(dqtot_dVb-dqtotL_dVb))/(qtot+qtotL) - ( 3*qtot*qtotL*(dqtot_dVb+dqtotL_dVb)+(pow(qtot-qtotL,2))*(dqtot_dVb+dqtotL_dVb))/(pow(qtot+qtotL,2)));
+		Csb_aux2 = (9*pow(qtotL,2)*dqtotL_dVb+12*qtot*qtotL*dqtotL_dVb+4*pow(qtot,2)*dqtotL_dVb+6*dqtot_dVb*pow(qtotL,2)+8*qtot*qtotL*dqtot_dVb+6*pow(qtot,2)*dqtot_dVb)/(15*pow(qtotL,2)+30*qtot*qtotL+15*pow(qtot,2));
+		Csb_aux3 = -(L-Lsat)*2*(Csb_aux2 - ((3*pow(qtotL,3)+6*qtot*pow(qtotL,2)+4*pow(qtot,2)*qtotL+2*pow(qtot,3))*(30*qtotL*dqtotL_dVb+30*qtot*dqtotL_dVb+30*qtotL*dqtot_dVb+30*qtot*dqtot_dVb))/(pow(15*pow(qtotL,2)+30*qtot*qtotL+15*pow(qtot,2),2)));
+		Csb = -Csb_aux - Csb_aux3;
+
+		//Cm = Cdg-Cgd;
+		Cbd = Cdg+Cds+Cdb-Cgd-Csd;		
+		Cbg = Cgd+Cgs+Cgb-Csg-Cdg;
+		Cbs = Csg+Csd+Csb-Cgs-Cds;
+
+		if (analysis("ac"))
+			begin
+				I(b_gd) <+  NF*(Cgd * ddt(V(b_gd)));
+				I(b_gs) <+  NF*(Cgs * ddt(V(b_gs)));
+				I(b_gb) <+  NF*(Cgb * ddt(V(b_gb)));
+				I(b_ds) <+ NF*(Csd*ddt(V(b_db)) - Cds *ddt(V(b_sb))-(Cdg-Cgd)*ddt(V(b_gb)) +  Ydd*V(b_db) + Ydg*V(b_gb) - Yds*V(b_sb));
+				I(b_db) <+  NF*(Cbd * ddt(V(b_db)));
+				I(b_sb) <+ NF*((Cbg-Cgb)*ddt(V(b_gb)) + Cbs * ddt(V(b_sb)));
+			end
+		else if (analysis("dc"))
+			I(b_ds) <+ NF*(Id);	
+		else
+			begin
+				I(b_gd) <+  NF*(Cgd * ddt(V(b_gd)));
+				I(b_gs) <+  NF*(Cgs * ddt(V(b_gs)));
+				I(b_gb) <+  NF*(-Cgb * ddt(V(b_gb)));
+				I(b_ds) <+ NF*(-Csd*ddt(V(b_db)) + Cds *ddt(V(b_sb))-(-Cdg-Cgd)*ddt(V(b_gb))   +Id);// +  Ydd*V(b_db) + Ydg*V(b_gb) - Yds*V(b_sb);
+				I(b_db) <+  NF*(Cbd * ddt(V(b_db)));
+				I(b_sb) <+ NF*(-(Cbg-Cgb)*ddt(V(b_gb)) + Cbs * ddt(V(b_sb)));
+			end
+
+	end
+
+endmodule 
